@@ -1,0 +1,8 @@
+[package]
+name = "hyper-microservice"
+version = "0.1.0"
+authors = ["kyle.smallwood@gmail.com <kyle.smallwood@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+hyper = "0.12"
