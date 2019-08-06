@@ -1,4 +1,4 @@
-use futures::{future, Future};
+ use futures::{future, Future};
 use hyper::{Body, Error, Method, Request, Response, Server, StatusCode};
 use hyper::service::service_fn;
 use slab::Slab;
@@ -14,6 +14,13 @@ struct UserData;
 //Arc= atomic reference counter provides multiple references to single instance of data - mutex over slab of user data
 type UserDb = Arc<Mutex<Slab<UserData>>>;
 
+const USER_PATH: &str = "/user/";
+
+impl fmt::Display for UserData {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("{}")
+     }
+}
 
 fn main() {
 
@@ -30,18 +37,58 @@ fn main() {
 
     fn microservice_handler(req: Request<Body>, user_db: &UserDb) -> impl Future<Item=Response<Body>, Error=Error>
     {
-            match(req.method(), req.uri().path()){
-                (&Method::GET, "/") => {
-                    future::ok(Response::new(INDEX.into()))
-                },
-                _ =>{
-                let response = Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(Body::empty())
-                    .unwrap();
-                    future::ok(response)
-                },
-        }
+     let response = {
+             match (req.method(), req.uri().path()) {
+                 (&Method::GET, "/") => {
+                     Response::new(INDEX.into())
+                 },
+                 (method, path) if path.starts_with(USER_PATH) => {
+                     let user_id = path.trim_left_matches(USER_PATH)
+                        .parse::<UserId>().ok().map(|x| x as usize);
+                     let mut users = user_db.lock().unwrap();
+                     match(method, user_id){
+                        (&Method::POST, None) => {
+                            let id = users.insert(UserData);
+                            Response::new(id.to_string().into())
+                        }
+                        (&Method::POST, Some(_)) => {
+                            response_with_code(StatusCode::BAD_REQUEST)
+                        }
+                        (&Method::GET, Some(id)) => {
+                            if let Some(data) = users.get(id) {
+                                Response::new(data.to_string().into())
+                            } else {
+                                response_with_code(StatusCode::NOT_FOUND)
+                            }
+                        }
+                        (&Method::PUT, Some(id)) => {
+                            if let Some(user) = users.get_mut(id) {
+                                *user = UserData;
+                                response_with_code(StatusCode::OK)
+                            } else {
+                                response_with_code(StatusCode::NOT_FOUND)
+                            }
+                        },
+                        (&Method::DELETE, Some(id)) => {
+                            if users.contains(id) {
+                                users.remove(id);
+                                response_with_code(StatusCode::OK)
+                            } else {
+                                response_with_code(StatusCode::NOT_FOUND)
+                            }
+                        },
+
+                        _ => {
+                            response_with_code(StatusCode::METHOD_NOT_ALLOWED)
+                        },
+                     }
+                 },
+                 _ => {
+                     response_with_code(StatusCode::NOT_FOUND)
+                 },
+             }
+         };
+         future::ok(response)
     }
 
     fn response_with_code(status_code: StatusCode) -> Response<Body> {
@@ -50,7 +97,7 @@ fn main() {
             .body(Body::empty())
             .unwrap()
     }
-    
+
 const INDEX: &'static str = r#"
 <!doctype html>
 <html>
